@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"errors"
-	"time"
+	"fmt"
+	"log"
+	"net/http"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -47,7 +50,7 @@ func setupOTelSDK(ctx context.Context, serviceName, serviceVersion string) (shut
 	otel.SetTextMapPropagator(prop)
 
 	// Set up meter provider.
-	meterProvider, err := newMeterProvider(res, ctx)
+	meterProvider, err := newMeterProvider(res)
 	if err != nil {
 		handleErr(err)
 		return
@@ -73,18 +76,26 @@ func newPropagator() propagation.TextMapPropagator {
 	)
 }
 
-func newMeterProvider(res *resource.Resource, ctx context.Context) (*metric.MeterProvider, error) {
-	metricExporter, err := otlpmetricgrpc.New(ctx)
+func newMeterProvider(res *resource.Resource) (*metric.MeterProvider, error) {
+	metricExporter, err := prometheus.New()
 	if err != nil {
 		return nil, err
 	}
 
 	meterProvider := metric.NewMeterProvider(
 		metric.WithResource(res),
-		metric.WithReader(metric.NewPeriodicReader(metricExporter,
-			// Default is 1m. Set to 3s for demonstrative purposes.
-			metric.WithInterval(3*time.Second))),
+		metric.WithReader(metricExporter),
 	)
 
 	return meterProvider, nil
+}
+
+func serveMetrics() {
+	log.Printf("serving metrics at localhost:9200/metrics")
+	http.Handle("/metrics", promhttp.Handler())
+	err := http.ListenAndServe(":9200", nil) //nolint:gosec // Ignoring G114: Use of net/http serve function that has no support for setting timeouts.
+	if err != nil {
+		fmt.Printf("error serving http: %v", err)
+		return
+	}
 }
